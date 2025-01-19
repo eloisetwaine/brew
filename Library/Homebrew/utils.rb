@@ -1,34 +1,12 @@
-# typed: true
+# typed: true # rubocop:todo Sorbet/StrictSigil
 # frozen_string_literal: true
 
-require "time"
-
-require "utils/analytics"
-require "utils/curl"
-require "utils/fork"
-require "utils/formatter"
-require "utils/gems"
-require "utils/git"
-require "utils/git_repository"
-require "utils/github"
-require "utils/gzip"
-require "utils/inreplace"
-require "utils/link"
-require "utils/popen"
-require "utils/repology"
-require "utils/svn"
-require "utils/tty"
-require "tap_constants"
-require "PATH"
-require "extend/kernel"
+require "context"
 
 module Homebrew
   extend Context
-  extend T::Sig
 
-  module_function
-
-  def _system(cmd, *args, **options)
+  def self._system(cmd, *args, **options)
     pid = fork do
       yield if block_given?
       args.map!(&:to_s)
@@ -43,17 +21,18 @@ module Homebrew
     $CHILD_STATUS.success?
   end
 
-  def system(cmd, *args, **options)
+  def self.system(cmd, *args, **options)
     if verbose?
-      puts "#{cmd} #{args * " "}".gsub(RUBY_PATH, "ruby")
-                                 .gsub($LOAD_PATH.join(File::PATH_SEPARATOR).to_s, "$LOAD_PATH")
+      out = (options[:out] == :err) ? $stderr : $stdout
+      out.puts "#{cmd} #{args * " "}".gsub(RUBY_PATH, "ruby")
+                                     .gsub($LOAD_PATH.join(File::PATH_SEPARATOR).to_s, "$LOAD_PATH")
     end
     _system(cmd, *args, **options)
   end
 
   # rubocop:disable Style/GlobalVars
   sig { params(the_module: Module, pattern: Regexp).void }
-  def inject_dump_stats!(the_module, pattern)
+  def self.inject_dump_stats!(the_module, pattern)
     @injected_dump_stat_modules ||= {}
     @injected_dump_stat_modules[the_module] ||= []
     injected_methods = @injected_dump_stat_modules[the_module]
@@ -63,10 +42,12 @@ module Homebrew
 
         method = instance_method(name)
         define_method(name) do |*args, &block|
+          require "time"
+
           time = Time.now
 
           begin
-            method.bind(self).call(*args, &block)
+            method.bind_call(self, *args, &block)
           ensure
             $times[name] ||= 0
             $times[name] += Time.now - time
@@ -81,7 +62,7 @@ module Homebrew
     at_exit do
       col_width = [$times.keys.map(&:size).max.to_i + 2, 15].max
       $times.sort_by { |_k, v| v }.each do |method, time|
-        puts format("%<method>-#{col_width}s %<time>0.4f sec", method: "#{method}:", time: time)
+        puts format("%<method>-#{col_width}s %<time>0.4f sec", method: "#{method}:", time:)
       end
     end
   end
@@ -89,8 +70,6 @@ module Homebrew
 end
 
 module Utils
-  extend T::Sig
-
   # Removes the rightmost segment from the constant expression in the string.
   #
   #   deconstantize('Net::HTTP')   # => "Net"
@@ -128,9 +107,60 @@ module Utils
 
   # A lightweight alternative to `ActiveSupport::Inflector.pluralize`:
   # Combines `stem` with the `singular` or `plural` suffix based on `count`.
-  sig { params(stem: String, count: Integer, plural: String, singular: String).returns(String) }
-  def self.pluralize(stem, count, plural: "s", singular: "")
+  # Adds a prefix of the count value if `include_count` is set to true.
+  sig {
+    params(stem: String, count: Integer, plural: String, singular: String, include_count: T::Boolean).returns(String)
+  }
+  def self.pluralize(stem, count, plural: "s", singular: "", include_count: false)
+    prefix = include_count ? "#{count} " : ""
     suffix = (count == 1) ? singular : plural
-    "#{stem}#{suffix}"
+    "#{prefix}#{stem}#{suffix}"
+  end
+
+  sig { params(author: String).returns({ email: String, name: String }) }
+  def self.parse_author!(author)
+    match_data = /^(?<name>[^<]+?)[ \t]*<(?<email>[^>]+?)>$/.match(author)
+    if match_data
+      name = match_data[:name]
+      email = match_data[:email]
+    end
+    raise UsageError, "Unable to parse name and email." if name.blank? && email.blank?
+
+    { name: T.must(name), email: T.must(email) }
+  end
+
+  # Makes an underscored, lowercase form from the expression in the string.
+  #
+  # Changes '::' to '/' to convert namespaces to paths.
+  #
+  #   underscore('ActiveModel')         # => "active_model"
+  #   underscore('ActiveModel::Errors') # => "active_model/errors"
+  #
+  # @see https://github.com/rails/rails/blob/v6.1.7.2/activesupport/lib/active_support/inflector/methods.rb#L81-L100
+  #   `ActiveSupport::Inflector.underscore`
+  sig { params(camel_cased_word: T.any(String, Symbol)).returns(String) }
+  def self.underscore(camel_cased_word)
+    return camel_cased_word.to_s unless /[A-Z-]|::/.match?(camel_cased_word)
+
+    word = camel_cased_word.to_s.gsub("::", "/")
+    word.gsub!(/([A-Z])(?=[A-Z][a-z])|([a-z\d])(?=[A-Z])/) do
+      T.must(::Regexp.last_match(1) || ::Regexp.last_match(2)) << "_"
+    end
+    word.tr!("-", "_")
+    word.downcase!
+    word
+  end
+
+  SAFE_FILENAME_REGEX = /[[:cntrl:]#{Regexp.escape("#{File::SEPARATOR}#{File::ALT_SEPARATOR}")}]/o
+  private_constant :SAFE_FILENAME_REGEX
+
+  sig { params(basename: String).returns(T::Boolean) }
+  def self.safe_filename?(basename)
+    !SAFE_FILENAME_REGEX.match?(basename)
+  end
+
+  sig { params(basename: String).returns(String) }
+  def self.safe_filename(basename)
+    basename.gsub(SAFE_FILENAME_REGEX, "")
   end
 end

@@ -1,9 +1,8 @@
-# typed: false
 # frozen_string_literal: true
 
 require "cask/list"
 
-describe Cask::List, :cask do
+RSpec.describe Cask::List, :cask do
   it "lists the installed Casks in a pretty fashion" do
     casks = %w[local-caffeine local-transmission].map { |c| Cask::CaskLoader.load(c) }
 
@@ -11,9 +10,9 @@ describe Cask::List, :cask do
       InstallHelper.install_with_caskfile(c)
     end
 
-    expect {
+    expect do
       described_class.list_casks
-    }.to output(<<~EOS).to_stdout
+    end.to output(<<~EOS).to_stdout
       local-caffeine
       local-transmission
     EOS
@@ -30,9 +29,9 @@ describe Cask::List, :cask do
       InstallHelper.install_with_caskfile(c)
     end
 
-    expect {
+    expect do
       described_class.list_casks(one: true)
-    }.to output(<<~EOS).to_stdout
+    end.to output(<<~EOS).to_stdout
       local-caffeine
       local-transmission
       third-party-cask
@@ -50,9 +49,9 @@ describe Cask::List, :cask do
       InstallHelper.install_with_caskfile(c)
     end
 
-    expect {
+    expect do
       described_class.list_casks(full_name: true)
-    }.to output(<<~EOS).to_stdout
+    end.to output(<<~EOS).to_stdout
       local-caffeine
       local-transmission
       third-party/tap/third-party-cask
@@ -60,27 +59,35 @@ describe Cask::List, :cask do
   end
 
   describe "lists versions" do
-    let!(:casks) {
-      ["local-caffeine",
-       "local-transmission"].map(&Cask::CaskLoader.method(:load)).each(&InstallHelper.method(:install_with_caskfile))
-    }
-    let(:expected_output) {
+    let(:casks) do
+      [
+        "local-caffeine",
+        "local-transmission",
+      ].map { |token| Cask::CaskLoader.load(token) }
+    end
+    let(:expected_output) do
       <<~EOS
         local-caffeine 1.2.3
         local-transmission 2.61
       EOS
-    }
+    end
+
+    before do
+      casks.each do |cask|
+        InstallHelper.install_with_caskfile(cask)
+      end
+    end
 
     it "of all installed Casks" do
-      expect {
+      expect do
         described_class.list_casks(versions: true)
-      }.to output(expected_output).to_stdout
+      end.to output(expected_output).to_stdout
     end
 
     it "of given Casks" do
-      expect {
+      expect do
         described_class.list_casks(*casks, versions: true)
-      }.to output(expected_output).to_stdout
+      end.to output(expected_output).to_stdout
     end
   end
 
@@ -90,15 +97,15 @@ describe Cask::List, :cask do
     let(:casks) { [caffeine, transmission] }
 
     it "lists the installed files for those Casks" do
-      casks.each(&InstallHelper.method(:install_without_artifacts_with_caskfile))
+      casks.each { InstallHelper.install_without_artifacts_with_caskfile(_1) }
 
       transmission.artifacts.select { |a| a.is_a?(Cask::Artifact::App) }.each do |artifact|
         artifact.install_phase(command: NeverSudoSystemCommand, force: false)
       end
 
-      expect {
+      expect do
         described_class.list_casks(transmission, caffeine)
-      }.to output(<<~EOS).to_stdout
+      end.to output(<<~EOS).to_stdout
         ==> App
         #{transmission.config.appdir.join("Transmission.app")} (#{transmission.config.appdir.join("Transmission.app").abv})
         ==> App
